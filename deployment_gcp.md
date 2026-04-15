@@ -94,8 +94,8 @@ Kita akan mendeploy image tersebut dan memasukkan semua konfigurasi dari file `.
 ENV_VARS=$(grep -v '^#' .env | xargs | sed 's/ /,/g')
 
 # 2. Deploy ke Cloud Run
-gcloud run deploy agent-resume \
-  --image gcr.io/finpro-493407/KarierAI \
+gcloud run deploy karierai \
+  --image gcr.io/finpro-493407/karierai \
   --platform managed \
   --region us-central1 \
   --allow-unauthenticated \

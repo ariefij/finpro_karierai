@@ -18,13 +18,13 @@ ENV PATH="/root/.local/bin:$PATH"
 # copydependaency files
 COPY pyproject.toml poetry.lock* ./
 # install project dependencies
-RUN poetry config virtualenvs.create false\
-    && poetry install --only main --no-interaction --no-ansi 
+RUN poetry config virtualenvs.create false \
+    && poetry install --no-root --only main --no-interaction --no-ansi 
 
 # Copy the rest of the application code
 COPY . .
 # Install the project itself
-RUN poetry  install --no-interaction --no-ansi
+RUN poetry install --no-interaction --no-ansi
 # Expose the FastAPI port
 EXPOSE 8080
 
@@ -37,5 +37,5 @@ EXPOSE 8080
 # ENV LLM_MODEL=
 
 # Set the command to run the FastAPI server
-CMD ["uvicorn", "karierai.server:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["sh", "-c", "uvicorn karierai.server:app --host 0.0.0.0 --port ${PORT:-8080}"]
 
