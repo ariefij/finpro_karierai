@@ -9,7 +9,7 @@ import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()
-API_URL = os.getenv('https://karierai-94453605119.us-central1.run.app', 'http://localhost:8080')
+API_URL = os.getenv('API_URL')
 
 
 def call_api(path: str, payload: dict[str, Any]) -> dict[str, Any]:
