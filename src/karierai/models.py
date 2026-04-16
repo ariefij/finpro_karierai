@@ -5,15 +5,22 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class ChatHistoryMessage(BaseModel):
+    role: str = Field(..., description='Role chat, mis. user atau assistant')
+    content: str = Field(..., description='Isi pesan')
+
+
 class ChatRequest(BaseModel):
     query: str = Field(..., description='Pertanyaan user')
-    history: str = Field(default='', description='Ringkasan chat sebelumnya')
+    history: list[ChatHistoryMessage] | str = Field(default_factory=list, description='Riwayat chat sebelumnya')
 
 
 class ChatResponse(BaseModel):
     response: str
     input_tokens: int = 0
     output_tokens: int = 0
+    total_tokens: int = 0
+    token_mode: str = 'estimated'
     tool_messages: list[str] = Field(default_factory=list)
     used_tools: list[str] = Field(default_factory=list)
 

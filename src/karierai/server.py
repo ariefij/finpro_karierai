@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import logging
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 
-from .agent import ToolMessage, local_chat_response, supervisor_agent
+from .agent import ToolMessage, _normalize_history_input, local_chat_response, supervisor_agent
 from .config import get_settings
 from .ingestion import ingest_jobs
 from .models import (
@@ -78,14 +79,26 @@ def ingest(limit: int | None = None) -> IngestResponse:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+def _to_langchain_messages(query: str, history: Any) -> list[dict[str, str]]:
+    normalized = _normalize_history_input(history)
+    messages = [
+        {'role': item['role'] if item['role'] in {'user', 'assistant', 'system'} else 'user', 'content': item['content']}
+        for item in normalized
+    ]
+    messages.append({'role': 'user', 'content': query})
+    return messages
+
+
 @app.post('/chat', response_model=ChatResponse)
 def chat(request: ChatRequest) -> ChatResponse:
     settings = get_settings()
     if supervisor_agent is None or not settings.openai_api_key:
-        return ChatResponse(**local_chat_response(request.query, request.history))
+        local_result = local_chat_response(request.query, request.history)
+        local_result['total_tokens'] = local_result.get('input_tokens', 0) + local_result.get('output_tokens', 0)
+        return ChatResponse(**local_result)
     try:
         result = supervisor_agent.invoke(
-            {'messages': [{'role': 'user', 'content': f"{request.query}\n\nHistory:\n{request.history}"}]},
+            {'messages': _to_langchain_messages(request.query, request.history)},
             config=build_invoke_config({'route': '/chat'}),
         )
         messages = result['messages']
@@ -94,11 +107,16 @@ def chat(request: ChatRequest) -> ChatResponse:
         used_tools: list[str] = []
         input_tokens = 0
         output_tokens = 0
+        token_mode = 'estimated'
         for message in messages:
             if hasattr(message, 'response_metadata') and message.response_metadata:
                 usage = message.response_metadata.get('token_usage') or message.response_metadata.get('usage_metadata') or {}
-                input_tokens += usage.get('prompt_tokens', usage.get('input_tokens', 0))
-                output_tokens += usage.get('completion_tokens', usage.get('output_tokens', 0))
+                msg_input = int(usage.get('prompt_tokens', usage.get('input_tokens', 0)) or 0)
+                msg_output = int(usage.get('completion_tokens', usage.get('output_tokens', 0)) or 0)
+                if msg_input or msg_output:
+                    token_mode = 'provider_usage'
+                input_tokens += msg_input
+                output_tokens += msg_output
             if ToolMessage is not None and isinstance(message, ToolMessage):
                 tool_messages.append(str(message.content))
                 if getattr(message, 'name', None):
@@ -107,6 +125,8 @@ def chat(request: ChatRequest) -> ChatResponse:
             response=response_text,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            total_tokens=input_tokens + output_tokens,
+            token_mode=token_mode,
             tool_messages=tool_messages,
             used_tools=used_tools,
         )
@@ -114,6 +134,7 @@ def chat(request: ChatRequest) -> ChatResponse:
         logger.exception('chat failed, fallback to local orchestrator')
         local_result = local_chat_response(request.query, request.history)
         local_result['tool_messages'].append(f'llm_fallback={exc}')
+        local_result['total_tokens'] = local_result.get('input_tokens', 0) + local_result.get('output_tokens', 0)
         return ChatResponse(**local_result)
 
 

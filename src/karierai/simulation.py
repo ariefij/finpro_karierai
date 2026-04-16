@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import mimetypes
 import os
-from typing import Any
+import time
+from typing import Any, Iterator
 
 import requests
 import streamlit as st
@@ -26,12 +27,36 @@ def call_api_file(path: str, file_name: str, file_bytes: bytes, extra_data: dict
     return response.json()
 
 
+def stream_text_chunks(text: str) -> Iterator[str]:
+    words = text.split()
+    for index, word in enumerate(words):
+        suffix = ' ' if index < len(words) - 1 else ''
+        yield word + suffix
+        time.sleep(0.02)
+
+
+def render_usage_badges(message: dict[str, Any]) -> None:
+    if message.get('role') != 'assistant':
+        return
+    input_tokens = int(message.get('input_tokens', 0) or 0)
+    output_tokens = int(message.get('output_tokens', 0) or 0)
+    total_tokens = int(message.get('total_tokens', input_tokens + output_tokens) or 0)
+    token_mode = message.get('token_mode', 'estimated')
+    if not any([input_tokens, output_tokens, total_tokens]):
+        return
+    label = 'provider' if token_mode == 'provider_usage' else 'estimasi'
+    st.caption(f'Input tokens: {input_tokens} | Output tokens: {output_tokens} | Total: {total_tokens} ({label})')
+
+
 st.set_page_config(page_title='KarierAI', layout='wide')
 st.title('KarierAI')
 
 with st.sidebar:
     st.markdown(f'**API URL**: `{API_URL}`')
     st.caption('CV upload mendukung PDF teks, PDF scan, dan gambar (PNG/JPG/JPEG/WEBP/BMP/TIFF).')
+    debug_mode = st.checkbox('Debug mode', value=False)
+    show_token_usage = st.checkbox('Tampilkan token usage', value=True)
+    ui_streaming = st.checkbox('Streaming jawaban di UI', value=True)
     if st.button('Reset chat'):
         st.session_state.messages = []
 
@@ -44,29 +69,58 @@ with chat_tab:
     for message in st.session_state.messages:
         with st.chat_message(message['role']):
             st.markdown(message['content'])
+            if show_token_usage:
+                render_usage_badges(message)
 
     prompt = st.chat_input('Tanya tentang lowongan, statistik, atau konsultasi karier')
     if prompt:
-        history = '\n'.join(f"{m['role']}: {m['content']}" for m in st.session_state.messages[-20:])
-        st.session_state.messages.append({'role': 'user', 'content': prompt})
+        history = [
+            {'role': item['role'], 'content': item['content']}
+            for item in st.session_state.messages[-10:]
+            if item.get('content')
+        ]
+        user_message = {'role': 'user', 'content': prompt}
+        st.session_state.messages.append(user_message)
         with st.chat_message('user'):
             st.markdown(prompt)
         with st.chat_message('assistant'):
+            placeholder = st.empty()
+            placeholder.markdown('Sedang menyusun jawaban...')
             try:
                 result = call_api('/chat', {'query': prompt, 'history': history})
-                st.markdown(result['response'])
-                with st.expander('Tool messages'):
-                    st.code('\n\n'.join(result.get('tool_messages', [])) or 'No tool messages')
-                with st.expander('Usage'):
-                    st.json(
-                        {
-                            'input_tokens': result.get('input_tokens', 0),
-                            'output_tokens': result.get('output_tokens', 0),
-                            'used_tools': result.get('used_tools', []),
-                        }
-                    )
-                st.session_state.messages.append({'role': 'assistant', 'content': result['response']})
+                assistant_text = result['response']
+                if ui_streaming:
+                    with placeholder.container():
+                        st.write_stream(stream_text_chunks(assistant_text))
+                else:
+                    placeholder.markdown(assistant_text)
+                assistant_message = {
+                    'role': 'assistant',
+                    'content': assistant_text,
+                    'input_tokens': result.get('input_tokens', 0),
+                    'output_tokens': result.get('output_tokens', 0),
+                    'total_tokens': result.get('total_tokens', result.get('input_tokens', 0) + result.get('output_tokens', 0)),
+                    'token_mode': result.get('token_mode', 'estimated'),
+                    'used_tools': result.get('used_tools', []),
+                }
+                if show_token_usage:
+                    render_usage_badges(assistant_message)
+                if debug_mode:
+                    with st.expander('Tool messages'):
+                        st.code('\n\n'.join(result.get('tool_messages', [])) or 'No tool messages')
+                    with st.expander('Usage'):
+                        st.json(
+                            {
+                                'input_tokens': result.get('input_tokens', 0),
+                                'output_tokens': result.get('output_tokens', 0),
+                                'total_tokens': result.get('total_tokens', 0),
+                                'token_mode': result.get('token_mode', 'estimated'),
+                                'used_tools': result.get('used_tools', []),
+                            }
+                        )
+                st.session_state.messages.append(assistant_message)
             except Exception as exc:
+                placeholder.empty()
                 st.error(f'Gagal memanggil API: {exc}')
 
 with cv_tab:
