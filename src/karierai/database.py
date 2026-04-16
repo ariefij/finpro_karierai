@@ -128,22 +128,44 @@ def _get_db_path() -> Path:
 
 
 @contextmanager
-def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(_get_db_path())
+def get_connection(read_only: bool = False) -> sqlite3.Connection:
+    db_path = _get_db_path()
+    if read_only:
+        # Use URI mode for read-only access
+        conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
+    else:
+        conn = sqlite3.connect(db_path)
+    
     conn.row_factory = sqlite3.Row
     conn.create_function('salary_min', 1, _salary_min)
     conn.create_function('salary_max', 1, _salary_max)
     conn.create_function('salary_mid', 1, _salary_mid)
     try:
         yield conn
-        conn.commit()
+        if not read_only:
+            conn.commit()
     finally:
         conn.close()
 
 
 def init_sqlite() -> None:
-    with get_connection() as conn:
-        conn.executescript(SCHEMA_SQL)
+    db_path = _get_db_path()
+    # If file exists, we might still want to check schema, but skip if read-only
+    try:
+        with get_connection() as conn:
+            conn.executescript(SCHEMA_SQL)
+    except sqlite3.OperationalError as exc:
+        if 'readonly' in str(exc).lower() or 'permission denied' in str(exc).lower():
+            logger.warning('Database is read-only, skipping schema initialization: %s', exc)
+            # Verify tables exist at least
+            try:
+                with get_connection(read_only=True) as conn:
+                    conn.execute('SELECT 1 FROM jobs LIMIT 1').fetchone()
+            except Exception as inner_exc:
+                logger.error('Database is read-only AND jobs table missing: %s', inner_exc)
+                raise RuntimeError(f'Database initialization failed: {inner_exc}') from inner_exc
+        else:
+            raise
 
 
 def insert_jobs(rows: Iterable[dict[str, Any]]) -> int:

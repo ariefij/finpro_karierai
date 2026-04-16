@@ -132,15 +132,22 @@ def _validate_upload(file: UploadFile) -> None:
 
 async def _extract_cv_text_from_upload(file: UploadFile) -> str:
     _validate_upload(file)
-    raw_bytes = await file.read()
+    try:
+        raw_bytes = await file.read()
+    except Exception as exc:
+        logger.exception('Gagal membaca file upload: %s', exc)
+        raise HTTPException(status_code=400, detail=f'Gagal membaca file: {exc}') from exc
+
     if not raw_bytes:
         raise HTTPException(status_code=400, detail='File CV kosong.')
     try:
         return extract_text_from_upload_bytes(file.filename or '', file.content_type, raw_bytes)
     except ValueError as exc:
+        logger.warning('CV processing error: %s', exc)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.exception('Internal error during CV extraction: %s', exc)
+        raise HTTPException(status_code=500, detail=f'Gagal memproses CV: {exc}') from exc
 
 
 @app.post('/cv/analyze', response_model=CVAnalyzeResponse)
@@ -161,8 +168,14 @@ def recommend(request: RecommendationRequest) -> RecommendationResponse:
 
 @app.post('/recommend-file', response_model=RecommendationResponse)
 async def recommend_file(file: UploadFile = File(...), top_k: int = Form(5)) -> RecommendationResponse:
-    cv_text = await _extract_cv_text_from_upload(file)
-    return RecommendationResponse(**build_recommendations(cv_text, top_k=top_k))
+    try:
+        cv_text = await _extract_cv_text_from_upload(file)
+        return RecommendationResponse(**build_recommendations(cv_text, top_k=top_k))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception('Recommendation failed: %s', exc)
+        raise HTTPException(status_code=500, detail=f'Gagal memberikan rekomendasi: {exc}') from exc
 
 
 @app.post('/consult', response_model=ConsultationResponse)

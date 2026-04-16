@@ -14,7 +14,7 @@ load_dotenv()
 class Settings:
     project_root: Path = Path(__file__).resolve().parents[2]
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
-    llm_model: str = os.getenv("LLM_MODEL", "gpt-4.1-mini")
+    llm_model: str = os.getenv("LLM_MODEL", "gpt-4o-mini")
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
     langfuse_public_key: str = os.getenv("LANGFUSE_PUBLIC_KEY", "")
     langfuse_secret_key: str = os.getenv("LANGFUSE_SECRET_KEY", "")
